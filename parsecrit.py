@@ -18,7 +18,7 @@ parser.add_argument(
     "--target",
     type = str,
     required=True,
-    help = "Path to the target repo",
+    help = "Path to the target OSS-Fuzz repo",
 )
 parser.add_argument(
     "-o",
@@ -58,46 +58,45 @@ def is_same_url(lhs: str, rhs: str) -> bool:
     return lhs_author == rhs_author and lhs_repo == rhs_repo
 
 
-def get_integrated_projects() -> list[str]:
-    projects = [ f.name for f in os.scandir(PROJECTS_DIR) if f.is_dir() ]
-    return projects
-
-
-def check_url_from_config(yaml_path: Path, repo_url: str) -> bool:
+def get_url_from_config(yaml_path: Path) -> str:
     if not yaml_path.exists():
-        return False
+        return ""
 
     main_repo_url = ""
     with open(yaml_path) as f:
         config = yaml.safe_load(f)
         main_repo_url = config.get("main_repo", "")
 
-    return is_same_url(repo_url, main_repo_url)
+    return main_repo_url
 
 
-def short_circuit_check(repo_url: str) -> bool:
-    repo_name = repo_url[repo_url.rfind("/") + 1:]
-    project_path = PROJECTS_DIR / repo_name
-    if not project_path.exists():
-        return False
+def cache_integrated_projects() -> dict[str, str]:
+    cache = {}
+    projects = [f.name for f in os.scandir(PROJECTS_DIR) if f.is_dir()]
 
-    yaml_path = project_path / "project.yaml"
-    return check_url_from_config(yaml_path, repo_url)
+    for project in projects:
+        yaml_path = PROJECTS_DIR / project / "project.yaml"
+        if url := get_url_from_config(yaml_path):
+            cache[project] = url
+
+    return cache
 
 
-def brute_force_check(repo_url: str) -> bool:
-    integrated_projects = get_integrated_projects()
-    for project in integrated_projects:
-        project_path = PROJECTS_DIR / project
-        yaml_path = project_path / "project.yaml"
-        if check_url_from_config(yaml_path, repo_url):
+def short_circuit_check(cached_projects: dict[str, str], repo_url: str) -> bool:
+    repo_name = repo_url[repo_url.rstrip("/").rfind("/") + 1:]
+    return is_same_url(repo_url, cached_projects.get(repo_name, ""))
+
+
+def brute_force_check(cached_projects: dict[str, str], repo_url: str) -> bool:
+    for cached_url in cached_projects.values():
+        if is_same_url(repo_url, cached_url):
             return True
 
     return False
 
 
-def check_fuzz_integration(repo_url: str) -> bool:
-    return short_circuit_check(repo_url) if True else brute_force_check(repo_url)
+def check_fuzz_integration(cached_projects: dict[str, str], repo_url: str) -> bool:
+    return short_circuit_check(cached_projects, repo_url) or brute_force_check(cached_projects, repo_url)
 
 
 def main():
@@ -106,10 +105,11 @@ def main():
         reader = csv.DictReader(csvfile)
         sortedlist = sorted(reader, key=lambda row:(row["default_score"]), reverse=True)
 
+    cached_projects = cache_integrated_projects()
     with open(args.output, "w") as f:
         for row in sortedlist:
             repo_url = row["repo.url"]
-            if not check_fuzz_integration(repo_url):
+            if not check_fuzz_integration(cached_projects, repo_url):
                 output = f"[OPPORTUNITY]: {repo_url}"
                 print(output)
                 f.write(output + "\n")
