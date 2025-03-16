@@ -28,6 +28,13 @@ parser.add_argument(
     help = "Output file to store results"
 )
 parser.add_argument(
+    "-c",
+    "--criticality",
+    type = float,
+    default=0.7,
+    help = "Criticality threshold for filtering the output"
+)
+parser.add_argument(
     "-v",
     "--verbose",
     action="store_true",
@@ -108,13 +115,17 @@ def main():
     cached_projects = cache_integrated_projects()
     with open(args.output, "w") as f:
         for row in sortedlist:
+            criticality_score = float(row["default_score"])
+            if criticality_score < args.criticality:
+                break
             repo_url = row["repo.url"]
             if not check_fuzz_integration(cached_projects, repo_url):
-                output = f"[OPPORTUNITY]: {repo_url}"
+                output = f"[OPPORTUNITY]: {repo_url} [CRITICALITY]: {criticality_score}"
                 print(output)
                 f.write(output + "\n")
             elif args.verbose:
-                print(f"[INTEGRATED]: {repo_url}")
+                output = f"[INTEGRATED]: {repo_url} [CRITICALITY]: {criticality_score}"
+                print(output)
 
 
 if __name__ == "__main__":
